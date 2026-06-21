@@ -45,6 +45,7 @@ PREREQUISITES
 
 Java 17
 Maven 3.9 or later
+Docker and Docker Compose are optional. They are only needed for the Docker Compose run path.
 
 No external database or message broker is required. Both services use embedded H2.
 
@@ -61,6 +62,26 @@ Terminal 2: Run Event Gateway
 
     cd event-gateway-service
     mvn spring-boot:run
+
+DOCKER COMPOSE RUN OPTION
+
+As an alternative to running both services manually, you can start both services with Docker Compose from the repository root.
+
+Build and start both containers:
+
+    docker compose up --build
+
+This builds an image for each service and starts both containers on the same Docker network.
+
+Inside Docker, the Gateway does not call the Account Service through localhost. The docker-compose.yml file sets:
+
+    ACCOUNT_SERVICE_BASE_URL=http://account-service:8081
+
+Spring Boot maps this environment variable to the account.service.base-url property. This lets the Gateway reach the Account Service by its Docker Compose service name.
+
+Stop and remove the containers:
+
+    docker compose down
 
 Health checks:
 
@@ -88,7 +109,7 @@ Event Gateway:
 
 The Account Service tests cover balance calculation, idempotency, validation, and out-of-order ordering.
 
-The Gateway tests cover invalid events returning 400, successful event submission, duplicate handling, Account Service failure returning 503, Gateway read endpoints continuing to work when the Account Service is unavailable, and trace ID propagation.
+The Gateway tests cover invalid events returning 400, successful event submission, duplicate handling, Account Service failure returning 503, Gateway read endpoints continuing to work when the Account Service is unavailable, and trace ID propagation. A separate integration test verifies the real Gateway to Account Service HTTP flow using WireMock as the downstream Account Service stand-in.
 
 SAMPLE CURL COMMANDS
 
