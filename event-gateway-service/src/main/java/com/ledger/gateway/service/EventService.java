@@ -5,6 +5,9 @@ import com.ledger.gateway.dto.EventRequest;
 import com.ledger.gateway.dto.EventResponse;
 import com.ledger.gateway.model.EventEntity;
 import com.ledger.gateway.repository.EventRepository;
+import com.ledger.gateway.trace.TraceContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
@@ -16,6 +19,8 @@ import java.util.Optional;
 @Service
 public class EventService {
 
+    private static final Logger log = LoggerFactory.getLogger(EventService.class);
+
     private final EventRepository repository;
     private final AccountClient accountClient;
 
@@ -25,6 +30,8 @@ public class EventService {
     }
 
     public SubmitResult submit(EventRequest req) {
+        String traceId = traceId();
+
         String type = req.getType() == null ? null : req.getType().trim().toUpperCase();
         if (!"CREDIT".equals(type) && !"DEBIT".equals(type)) {
             throw new IllegalArgumentException("type must be CREDIT or DEBIT");
@@ -32,6 +39,8 @@ public class EventService {
 
         Optional<EventEntity> existing = repository.findById(req.getEventId());
         if (existing.isPresent()) {
+            log.info("{\"service\":\"event-gateway-service\",\"traceId\":\"{}\",\"event\":\"duplicate_event\",\"eventId\":\"{}\",\"accountId\":\"{}\"}",
+                    traceId, req.getEventId(), req.getAccountId());
             return new SubmitResult(EventResponse.from(existing.get()), true);
         }
 
@@ -41,6 +50,9 @@ public class EventService {
         payload.put("amount", req.getAmount());
         payload.put("currency", req.getCurrency());
         payload.put("eventTimestamp", req.getEventTimestamp());
+
+        log.info("{\"service\":\"event-gateway-service\",\"traceId\":\"{}\",\"event\":\"calling_account_service\",\"eventId\":\"{}\",\"accountId\":\"{}\"}",
+                traceId, req.getEventId(), req.getAccountId());
 
         accountClient.applyTransaction(req.getAccountId(), payload);
 
@@ -54,6 +66,9 @@ public class EventService {
         e.setMetadata(req.getMetadata());
         e.setReceivedAt(Instant.now());
         repository.save(e);
+
+        log.info("{\"service\":\"event-gateway-service\",\"traceId\":\"{}\",\"event\":\"event_stored\",\"eventId\":\"{}\",\"accountId\":\"{}\"}",
+                traceId, req.getEventId(), req.getAccountId());
 
         return new SubmitResult(EventResponse.from(e), false);
     }
@@ -69,6 +84,11 @@ public class EventService {
                 .toList();
     }
 
+    private String traceId() {
+        String traceId = TraceContext.get();
+        return traceId == null ? "" : traceId;
+    }
+
     public static class SubmitResult {
         private final EventResponse event;
         private final boolean duplicate;
@@ -78,7 +98,12 @@ public class EventService {
             this.duplicate = duplicate;
         }
 
-        public EventResponse getEvent() { return event; }
-        public boolean isDuplicate() { return duplicate; }
+        public EventResponse getEvent() {
+            return event;
+        }
+
+        public boolean isDuplicate() {
+            return duplicate;
+        }
     }
 }
