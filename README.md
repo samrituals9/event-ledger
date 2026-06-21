@@ -193,15 +193,23 @@ The Account Service reads the same X-Trace-Id header, includes it in its logs, a
 
 This makes it possible to follow one request across both services by searching for the same trace ID in both logs.
 
-Resiliency: Timeout, Retry, and Backoff
+Resiliency: Timeout, Retry, Backoff, and Circuit Breaker
 
-Gateway calls to the Account Service use timeout and retry behavior.
+Gateway calls to the Account Service use layered resiliency patterns.
 
 The HTTP client has connect and read timeouts so the Gateway does not hang indefinitely if the Account Service is slow or unavailable.
 
 Failed Account Service calls are retried up to a small maximum number of attempts. A short backoff is used between attempts.
 
-If all attempts fail, the Gateway returns 503 Service Unavailable instead of returning a generic 500 error.
+A lightweight in-process circuit breaker tracks consecutive failed logical calls to the Account Service. After a configurable threshold of consecutive failures, the circuit breaker opens. While open, the Gateway fails fast with 503 Service Unavailable instead of spending time on repeated downstream HTTP calls.
+
+After a cooldown period, the circuit breaker moves to a half-open state and allows one trial request. If the trial succeeds, the circuit closes. If it fails, the circuit opens again.
+
+The circuit breaker applies to both the POST /events downstream transaction call and the GET /accounts/{accountId}/balance proxy call.
+
+Gateway read endpoints such as GET /events/{id} and GET /events?account=... do not go through the circuit breaker because they are served from the Gateway database.
+
+Retry handles short transient failures. The circuit breaker handles sustained downstream outages by failing fast.
 
 Graceful Degradation
 

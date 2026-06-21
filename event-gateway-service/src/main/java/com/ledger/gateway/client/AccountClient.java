@@ -24,19 +24,23 @@ public class AccountClient {
     private final MetricsService metrics;
     private final int maxAttempts;
     private final long backoffMs;
+    private final CircuitBreaker circuitBreaker;
 
     public AccountClient(RestClient accountRestClient,
                          MetricsService metrics,
                          @Value("${account.client.max-attempts:2}") int maxAttempts,
-                         @Value("${account.client.backoff-ms:200}") long backoffMs) {
+                         @Value("${account.client.backoff-ms:200}") long backoffMs,
+                         @Value("${account.client.cb.failure-threshold:3}") int cbFailureThreshold,
+                         @Value("${account.client.cb.open-duration-ms:5000}") long cbOpenDurationMs) {
         this.restClient = accountRestClient;
         this.metrics = metrics;
         this.maxAttempts = maxAttempts;
         this.backoffMs = backoffMs;
+        this.circuitBreaker = new CircuitBreaker("account-service", cbFailureThreshold, cbOpenDurationMs);
     }
 
     public void applyTransaction(String accountId, Map<String, Object> payload) {
-        withRetry("applyTransaction", () -> {
+        callThroughCircuit("applyTransaction", () -> withRetry("applyTransaction", () -> {
             restClient.post()
                     .uri("/accounts/{accountId}/transactions", accountId)
                     .contentType(MediaType.APPLICATION_JSON)
@@ -44,12 +48,13 @@ public class AccountClient {
                     .body(payload)
                     .retrieve()
                     .toBodilessEntity();
+
             return null;
-        });
+        }));
     }
 
     public BigDecimal getBalance(String accountId) {
-        return withRetry("getBalance", () -> {
+        return callThroughCircuit("getBalance", () -> withRetry("getBalance", () -> {
             BalanceDto dto = restClient.get()
                     .uri("/accounts/{accountId}/balance", accountId)
                     .header(TRACE_HEADER, currentTraceId())
@@ -57,7 +62,22 @@ public class AccountClient {
                     .body(BalanceDto.class);
 
             return dto == null ? null : dto.getBalance();
-        });
+        }));
+    }
+
+    private <T> T callThroughCircuit(String operation, Supplier<T> retryingCall) {
+        try {
+            return circuitBreaker.execute(retryingCall);
+        } catch (CircuitOpenException e) {
+            metrics.increment("downstream.circuit_open");
+
+            log.warn("{\"service\":\"event-gateway-service\",\"traceId\":\"{}\",\"event\":\"circuit_open_rejected\",\"operation\":\"{}\"}",
+                    currentTraceId(), operation);
+
+            throw new AccountServiceException(e.getMessage(), e);
+        } catch (RestClientException e) {
+            throw new AccountServiceException(e.getMessage(), e);
+        }
     }
 
     private <T> T withRetry(String operation, Supplier<T> action) {
@@ -80,7 +100,7 @@ public class AccountClient {
 
         metrics.increment("downstream.failures");
 
-        throw new AccountServiceException(
+        throw new RestClientException(
                 "Account Service call failed after " + maxAttempts + " attempts: "
                         + (lastException == null ? "unknown error" : lastException.getMessage()),
                 lastException
@@ -98,6 +118,10 @@ public class AccountClient {
     private String currentTraceId() {
         String traceId = TraceContext.get();
         return traceId == null ? "" : traceId;
+    }
+
+    public CircuitBreaker.State circuitState() {
+        return circuitBreaker.getState();
     }
 
     public static class BalanceDto {

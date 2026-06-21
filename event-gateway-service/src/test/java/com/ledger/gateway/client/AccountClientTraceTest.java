@@ -27,7 +27,7 @@ class AccountClientTraceTest {
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         RestClient restClient = builder.build();
 
-        AccountClient client = new AccountClient(restClient, new MetricsService(), 2, 1);
+        AccountClient client = new AccountClient(restClient, new MetricsService(), 2, 1, 3, 5000);
 
         server.expect(requestTo("http://account-service/accounts/acct-1/transactions"))
                 .andExpect(header("X-Trace-Id", "trace-xyz"))
