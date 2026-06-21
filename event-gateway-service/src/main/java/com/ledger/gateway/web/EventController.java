@@ -2,6 +2,7 @@ package com.ledger.gateway.web;
 
 import com.ledger.gateway.dto.EventRequest;
 import com.ledger.gateway.dto.EventResponse;
+import com.ledger.gateway.metrics.MetricsService;
 import com.ledger.gateway.service.EventService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -14,14 +15,19 @@ import java.util.List;
 public class EventController {
 
     private final EventService service;
+    private final MetricsService metrics;
 
-    public EventController(EventService service) {
+    public EventController(EventService service, MetricsService metrics) {
         this.service = service;
+        this.metrics = metrics;
     }
 
     @PostMapping("/events")
     public ResponseEntity<EventResponse> submit(@Valid @RequestBody EventRequest req) {
+        metrics.increment("requests.events");
+
         EventService.SubmitResult result = service.submit(req);
+
         HttpStatus status = result.isDuplicate() ? HttpStatus.OK : HttpStatus.CREATED;
         return ResponseEntity.status(status).body(result.getEvent());
     }

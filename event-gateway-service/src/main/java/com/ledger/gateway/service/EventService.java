@@ -3,6 +3,7 @@ package com.ledger.gateway.service;
 import com.ledger.gateway.client.AccountClient;
 import com.ledger.gateway.dto.EventRequest;
 import com.ledger.gateway.dto.EventResponse;
+import com.ledger.gateway.metrics.MetricsService;
 import com.ledger.gateway.model.EventEntity;
 import com.ledger.gateway.repository.EventRepository;
 import com.ledger.gateway.trace.TraceContext;
@@ -23,10 +24,14 @@ public class EventService {
 
     private final EventRepository repository;
     private final AccountClient accountClient;
+    private final MetricsService metrics;
 
-    public EventService(EventRepository repository, AccountClient accountClient) {
+    public EventService(EventRepository repository,
+                        AccountClient accountClient,
+                        MetricsService metrics) {
         this.repository = repository;
         this.accountClient = accountClient;
+        this.metrics = metrics;
     }
 
     public SubmitResult submit(EventRequest req) {
@@ -39,8 +44,11 @@ public class EventService {
 
         Optional<EventEntity> existing = repository.findById(req.getEventId());
         if (existing.isPresent()) {
+            metrics.increment("events.duplicate");
+
             log.info("{\"service\":\"event-gateway-service\",\"traceId\":\"{}\",\"event\":\"duplicate_event\",\"eventId\":\"{}\",\"accountId\":\"{}\"}",
                     traceId, req.getEventId(), req.getAccountId());
+
             return new SubmitResult(EventResponse.from(existing.get()), true);
         }
 
@@ -56,21 +64,22 @@ public class EventService {
 
         accountClient.applyTransaction(req.getAccountId(), payload);
 
-        EventEntity e = new EventEntity();
-        e.setEventId(req.getEventId());
-        e.setAccountId(req.getAccountId());
-        e.setType(type);
-        e.setAmount(req.getAmount());
-        e.setCurrency(req.getCurrency());
-        e.setEventTimestamp(req.getEventTimestamp());
-        e.setMetadata(req.getMetadata());
-        e.setReceivedAt(Instant.now());
-        repository.save(e);
+        EventEntity event = new EventEntity();
+        event.setEventId(req.getEventId());
+        event.setAccountId(req.getAccountId());
+        event.setType(type);
+        event.setAmount(req.getAmount());
+        event.setCurrency(req.getCurrency());
+        event.setEventTimestamp(req.getEventTimestamp());
+        event.setMetadata(req.getMetadata());
+        event.setReceivedAt(Instant.now());
+
+        repository.save(event);
 
         log.info("{\"service\":\"event-gateway-service\",\"traceId\":\"{}\",\"event\":\"event_stored\",\"eventId\":\"{}\",\"accountId\":\"{}\"}",
                 traceId, req.getEventId(), req.getAccountId());
 
-        return new SubmitResult(EventResponse.from(e), false);
+        return new SubmitResult(EventResponse.from(event), false);
     }
 
     public Optional<EventResponse> getById(String eventId) {
